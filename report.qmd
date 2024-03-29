@@ -1,0 +1,527 @@
+---
+title: "Climate Change"
+subtitle: "How Global Temperatures have changed since the Industrial Revolution and their relationship with GDP"
+author: 
+  - Suraj Karakulath
+  - Modou Lamin Manjang (Momo)
+  - Gillian Baez Colon
+date: 2022-12-01
+abstract: "This report analyzes global temperature changes using deviations from a baseline and determines the relationship between GDP and temperature deviation via a linear model. Temperatures have increased globally throughout the years with a sharper increase in the last 50 years. The relationship between global temperatures and GDP is not entirely clear."
+format: 
+  html:
+    code-fold: true
+    standalone: true
+    embed-resources: true
+    toc: true
+---
+
+## Introduction
+
+Climate change refers to the long-term shifts in weather and temperature patterns driven by human activities. The effects of these shifts are catastrophic natural disasters, extinctions, forced migrations, and more. While there is an overwhelming amount of climate data available, there are yet to be significant achievements in the world of climate data science because of the complex nature of the data. Nevertheless, the field is progressing, thus, developing models to understand and predict climate change.
+
+Berkeley Earth put together the data set, which compiles three of the most cited land and ocean temperature data sets: NOAA's MLOST, NASA's GISTEMP, and the UK's HadCrut. It combines 1.6 billion temperature reports from 16 pre-existing archives, including Global Land and Ocean-and-Land Temperatures (GlobalTemperatures.csv), which tracks the average land and ocean temperatures from 1750 along with their uncertainties and their maximums and minimums (from 1850) until 2015. Additionally, it contains sheets that slice the data by country, state, and city.
+
+We intend to explore how temperatures have risen worldwide since 1750 and which regions (countries) have experienced the most extreme changes using the land and ocean temperature variables and country names. Then, we plan to determine the relationship between ta country's GDP and climate change using temperature variables.
+
+Our team selected these research questions because they work with the complex spatiotemporal nature of the data, which is often an obstacle when incorporating traditional data science methods and principles. While it is a common belief that temperatures have risen and will continue to do so (global warming), it is also likely that the fall and winter seasons will become colder. Our goal is to visualize these deviations in temperature since the Industrial Revolution and determine which regions have been affected the most. We hypothesize that temperatures have deviated the most in the last 50 years and countries with lower GDPs have been affected the most.
+
+## Data
+
+Data source: https://www.kaggle.com/datasets/berkeleyearth/climate-change-earth-surface-temperature-data
+
+```{r}
+#| label: data-import
+library(tidyverse)
+library(dplyr)
+library(patchwork)
+
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(patchwork))
+
+global_temp_country <- read_csv("GlobalLandTemperaturesByCountry.csv")
+global_temp <- read_csv("GlobalTemperatures.csv")
+```
+
+### Cleaning and Exploration
+
+```{r}
+#| label: head
+head(global_temp)
+```
+
+```{r}
+
+dim(global_temp) #3192 x 9
+```
+
+Global_temp contains 3192 observations of 9 variables.
+
+```{r}
+#| label: data types
+str(global_temp)
+```
+
+The dt variable is already in **date-time type** while all others are numbers for the temperature and their uncertainties.
+
+```{r}
+#| label: summary for global_temp
+summary(global_temp)
+```
+
+The dates range from 1750-01-01 to 2015-12-01. So (2015-1750)\*12+12 = 3192 dates (for every month), which matches our number of rows in the dataset. **We have one unique record for every month.**
+
+```{r}
+#| label: check missing values for global_temp
+print("Count of missing values by column wise")
+sapply(global_temp, function(x) sum(is.na(x)))
+```
+
+There are missing values for all variables except date. LandAverageTemperature and its uncertainty has 12 missing values, while the rest of the temperature columns have 1200 missing values each.
+
+We want to find out which are the dates for which there are missing values.
+
+First, the missing values for LandAverageTemperature:
+
+```{r}
+global_temp |> subset(is.na(LandAverageTemperature)) |> arrange(dt)
+```
+
+They seem to be random dates: one day in Nov 1, 1750, then months May, July, Oct, Nov, Dec in 1751 and then Feb, May, Jun, Jul in 1752. There are only 10 visible. These are only a few entries compared to the total number of observations. And when we do use them later, it will usually be in aggregation functions like mean, where the na.rm=TRUE parameter will take care of removing them.
+
+For the LandMaxTemperature, the 1200 missing values are:
+
+```{r}
+global_temp |> subset(is.na(LandMaxTemperature)) |> arrange(dt)
+missing <- global_temp |> subset(is.na(LandMaxTemperature)) 
+max(missing$dt)
+```
+
+These values are for all dates from Jan 1750 all the way to Dec 1849, for a total of 1200 rows. ((1849-1750)\*12+12 =1200))
+
+All of these have the other temperatures also missing.
+
+We can remove these rows if we are working with these variables, but we are not going to be using the LandMaxTemperature anyway. So for now we will keep it to see how average temperatures have risen over the years.
+
+## Visualizations
+
+### How have temperatures risen across the world since 1750?
+
+We hypothesize that global temperatures have risen since 1750, with a sharper increase in the last 50 years. We will confirm this by plotting the LandAverageTemperature against the date.
+
+```{r}
+#| label: land avg temp by dt visualization
+global_temp |> ggplot(aes(dt,LandAverageTemperature)) + geom_point()
+```
+
+There is a visible increase in the years from 1900 to 2000 and beyond, with 4-5 "bands" that most likely indicate seasons. The data from 1750 to 1850 has a bit more of noise/uncertainty. This "noise" may be the result of unstandardized data collection and multiple sources.
+
+This displays the entire dataset with temperatures for every month, which fluctuate due to season in every location. We can smooth it out by breaking it down by year and decade or comparing months across the years.
+
+```{r}
+#| label: adding months
+suppressPackageStartupMessages(library(lubridate))
+
+ global_temp <- global_temp |> mutate(yearDt = year(dt),
+                monthDt = month(dt),
+                decadeDt = round(year(dt),-1),
+                monthNames = format(dt,"%b"))
+
+monthNames = format(as.Date(paste0('2000-',1:12,'-01'),'%Y-%m-%d'),"%b")
+```
+
+```{r}
+#| label: names
+names(global_temp)
+```
+
+```{r}
+#| label: by year
+global_temp |> group_by(yearDt) |> 
+    summarise(LandAverageTemperature = mean(LandAverageTemperature,na.rm=TRUE)) %>%
+    ggplot(aes( x=yearDt, y=LandAverageTemperature, colour=LandAverageTemperature)) +
+    geom_point(alpha=0.25) +
+    theme(panel.background = element_rect(fill='white')) 
+```
+
+There is a clear rise in the average temperature over the last two centuries and a steep rise in the last 10-20 years. This proves our hypothesis somewhat that the sharpest increase has occurred within the last 50 years.
+
+The decade distribution shows the same increase:
+
+```{r}
+#| label: decade distribution
+global_temp |> group_by(decadeDt) |> 
+    summarise(LandAverageTemperature = mean(LandAverageTemperature,na.rm=TRUE)) %>%
+    ggplot(aes( x=decadeDt, y=LandAverageTemperature, colour=LandAverageTemperature)) +
+    geom_point(alpha=0.25) +
+    theme(panel.background = element_rect(fill='white')) 
+```
+
+### Quantifying the rise
+
+It is clear that global temperatures have risen and will likely continue to do so. We want to explore precisely how much they have been increasing. For this, we need a metric to identify how far the LandAverageTemperature has deviated from a baseline that makes sense.
+
+Climate science is a constantly evolving field; different models use different baselines. The baseline period is chosen depending on the specific research question addressed, the availability of data for that time, and the ability of the model to accurately simulate climate conditions over that period.
+
+Some studies use the first 100 years of available data as a baseline. While other more recent climate models, such as paleoclimate ones, use pre-Industrial Revolution years as a baseline. This accounts for the significant effects of industrialization on climate.
+
+We selected the average of the previous 100 years (1750 to 1850) as an initial baseline to compare how the average temperatures have risen since 1850.
+
+```{r}
+#| label: avg of 1750 to 1850
+first <- global_temp |> filter(dt >= '1750-01-01' & dt <= '1849-12-01')
+global_mean <- mean(first$LandAverageTemperature, na.rm = TRUE)
+```
+
+```{r}
+#| label: departures from baseline grouped by year
+global_temp |> mutate(departure = global_temp$LandAverageTemperature - global_mean) |> filter(dt >= '1850-01-01') |> group_by(yearDt) |> summarise(departure_by_year = mean(departure, na.rm = TRUE)) |>
+  ggplot(aes(yearDt)) + 
+   geom_col(mapping=aes(y=ifelse(departure_by_year >= 0, departure_by_year, 0), fill = "red"))+
+   geom_col(mapping=aes(y=ifelse(departure_by_year < 0, departure_by_year, 0), fill= "blue")) +
+   xlab("Year") + 
+   ylab("Departure from baseline (1750-1850)") +
+   scale_fill_manual(values = c("blue", "red")) + 
+   theme(legend.position = "none")   
+```
+
+```{r}
+#| label: departure grouped by decade
+global_temp |> mutate(departure = global_temp$LandAverageTemperature - global_mean) |> filter(dt >= '1850-01-01') |> group_by(decadeDt) |> summarise(departure_by_decade = mean(departure, na.rm = TRUE)) |>
+  ggplot(aes(decadeDt)) + 
+   geom_col(mapping=aes(y=ifelse(departure_by_decade >= 0, departure_by_decade, 0), fill = "red"))+
+   geom_col(mapping=aes(y=ifelse(departure_by_decade < 0, departure_by_decade, 0), fill= "blue")) +
+  xlab("Decade") + 
+  ylab("Departure from baseline (1750-1850") +
+   scale_fill_manual(values = c("blue", "red"))+
+   theme(legend.position = "none")   
+
+```
+
+Every decade the departure from baseline (on average for that decade) has increased.
+
+### Which countries have departed from the baseline the most?
+
+For this, we explore the country dataset.
+
+```{r}
+#|label: summary
+summary(global_temp_country)
+```
+
+Dataset has only 4 variables: 1 datetime, 2 float for the temperature and uncertainty, and 1 character for the country name. The dates start earlier at 1743 November and end at September 2013.
+
+```{r}
+#| label: length
+length(unique(global_temp_country$Country)) #243
+```
+
+There are 243 countries included with monthly AverageTemperature records for each country in that time period (with some missing values).
+
+```{r}
+#| label: dim for global_temp_country
+dim(global_temp_country) #577462 x 4
+```
+
+```{r}
+#| label: check missing values
+print("Count of missing values by column wise")
+sapply(global_temp_country, function(x) sum(is.na(x)))
+```
+
+### Calculating departures from the baseline for each country
+
+We calculate the departure of each country from the global mean and explore how much each country has deviated from their own baseline since different regions have different climate characteristics (e.g. a meaningful baseline for Russia may be too cold for Qatar, or the global mean may not be a meaningful baseline for Greenland).
+
+Calculating the departure from their own mean AverageTemperature of the baseline years (before 1850).
+
+```{r}
+library(tidyr)
+#Finding the baseline mean for each country first
+country_temp_means <- global_temp_country |> filter(dt <= '1849-12-01' ) |> group_by(Country) |> summarise(country_mean = mean(AverageTemperature,na.rm=TRUE))
+```
+
+Now ranking the countries with the maximum departure from their own mean for the baseline years.
+
+```{r}
+#| label: calculating departure and ranking
+country_dep <- global_temp_country |> left_join(country_temp_means, by = 'Country') |> 
+  mutate(departure = AverageTemperature - country_mean) 
+
+
+country_dep |> group_by(Country) |> summarise(max_departure = max(departure,na.rm = TRUE)) |> arrange(desc(max_departure)) |> suppressWarnings() 
+#had to suppress warnings due to a complex warning message "no non-missing arguments to min" etc.
+```
+
+The countries that have the highest departures from their own baseline turn out to be some of the colder countries, suggesting that these regions are seeing the biggest impact of climate change.
+
+Plot their departures from 1970 to the end:
+
+```{r}
+#| label: extract the month, decade and monthnames from the dt variable
+ country_dep <- country_dep |> mutate(yearDt = year(dt),
+                monthDt = month(dt),
+                decadeDt = round(year(dt),-1),
+                monthNames = format(dt,"%b"))
+
+monthNames = format(as.Date(paste0('2000-',1:12,'-01'),'%Y-%m-%d'),"%b")
+```
+
+```{r}
+#| label: Russia
+country_dep |> filter(Country == 'Russia' & dt >= '1970-01-01') |> 
+    group_by(yearDt) |> summarise(departure_by_year = mean(departure, na.rm = TRUE)) |>
+  ggplot(aes(yearDt)) + 
+   geom_col(mapping=aes(y=ifelse(departure_by_year >= 0, departure_by_year, 0), fill = "red"))+
+   geom_col(mapping=aes(y=ifelse(departure_by_year < 0, departure_by_year, 0), fill= "blue")) +
+   xlab("Year") +
+   ylab("Departure from baseline (until 1850)") +
+   scale_fill_manual(values = c("blue", "red")) +
+   theme(legend.position = "none")   
+```
+
+```{r}
+#| label: Mongolia
+country_dep |> filter(Country == 'Mongolia' & dt >= '1970-01-01') |> 
+  group_by(yearDt) |> summarise(departure_by_year = mean(departure, na.rm = TRUE)) |>
+  ggplot(aes(yearDt)) + 
+   geom_col(mapping=aes(y=ifelse(departure_by_year >= 0, departure_by_year, 0), fill = "red"))+
+   geom_col(mapping=aes(y=ifelse(departure_by_year < 0, departure_by_year, 0), fill= "blue")) +
+   xlab("Year") +
+   ylab("Departure from baseline (until 1850)") +
+   scale_fill_manual(values = c("blue", "red")) + 
+   theme(legend.position = "none")   
+```
+
+```{r}
+#| label: Kazakhstan
+country_dep |> filter(Country == 'Kazakhstan' & dt >= '1970-01-01') |> 
+  group_by(yearDt) |> summarise(departure_by_year = mean(departure, na.rm = TRUE)) |>
+  ggplot(aes(yearDt)) + 
+   geom_col(mapping=aes(y=ifelse(departure_by_year >= 0, departure_by_year, 0), fill = "red"))+
+   geom_col(mapping=aes(y=ifelse(departure_by_year < 0, departure_by_year, 0), fill= "blue")) +
+   xlab("Year") +
+   ylab("Departure from baseline (until 1850) ") +
+   scale_fill_manual(values = c("blue", "red")) + 
+  theme(legend.position = "none")   
+```
+
+```{r}
+#| label: Kuwait
+country_dep |> filter(Country == 'Kuwait' & dt >= '1970-01-01') |> 
+  group_by(yearDt) |> summarise(departure_by_year = mean(departure, na.rm = TRUE)) |>
+  ggplot(aes(yearDt)) + 
+   geom_col(mapping=aes(y=ifelse(departure_by_year >= 0, departure_by_year, 0), fill = "red"))+
+   geom_col(mapping=aes(y=ifelse(departure_by_year < 0, departure_by_year, 0), fill= "blue")) +
+   xlab("Year") +
+   ylab("Departure from baseline (until 1850)") +
+   scale_fill_manual(values = c("blue", "red")) + 
+   theme(legend.position = "none")   
+```
+
+As seen in each of the plots, the departures from the baseline years of each country since 1970 has been increasing all the way.
+
+### Which latitudes and longitudes have the highest departure from the baseline?
+
+Let's explore the temperature changes at different latitudes and longitudes. For this we import a dataset that maps country codes with latitudes and longitudes.
+
+```{r}
+#| label: import country coordinates
+country_coordinates <- read.csv("world_country_and_usa_states_latitude_and_longitude_values.csv")
+```
+
+```{r}
+#| label: dim
+dim(country_coordinates)
+```
+
+There are 245 rows here which means there are 2 countries which are not part of our original dataset. Let's find out which ones.
+
+```{r}
+#| label: unique countries
+unique(country_dep$Country)
+```
+
+```{r}
+#|label: unique country coordinates
+unique(country_coordinates$country)
+```
+
+```{r}
+#| label: setdiff countries
+setdiff(country_dep$Country, country_coordinates$country)
+```
+
+There are a few "countries" in our original dataset that are missing from the coordinates dataset. These are cases like
+
+-   Åland - an autonomous region in Finland (which is best to be removed if it has temperature records for the same dates as Finland)
+
+-   Caribbean countries like Antigua And Barbuda, Bonaire, Saint Eustatius And Saba, Curaçao (which have their own different unique cases such as being Dutch colonies so best to remove them) and French Southern and Antarctic Lands (which is an overseas Territory of France)
+
+-   Islands like Baker Island (which can be removed)
+
+-   Entire continents like Africa, Europe and Asia aggregated (which can be removed as we are only looking at individual countries)
+
+-   Cases of minor change in spelling like capitalisation of A in Bosnia and Herzegovina, Côte d'Ivoire which is also spelled Côte D'Ivoire, Congo which is variously named as just Congo, Democratic Republic and other variations, Denmark which is also included as Denmark (Europe), France and France (Europe), Falkland Islands (Islas Malvinas) and its square bracket variation, Micronesia which also appears as Federated States of Micronesia (all of which are corrected to their simplest versions, Burma which was the name of Myanmar until 1989)
+
+```{r}
+#| label: renaming
+country_dep$Country <- gsub("France\\(Europe\\)", "France", country_dep$Country)
+country_dep$Country <- gsub("Denmark\\(Europe\\)", "Denmark", country_dep$Country)
+country_dep$Country <- gsub("Netherlands\\(Europe\\)", "Netherlands", country_dep$Country)
+country_dep$Country <- gsub("Federated States Of Micronesia", "Micronesia", country_dep$Country)
+country_dep$Country <- gsub("United Kingdom\\(Europe\\)", "United Kingdom", country_dep$Country)
+country_dep$Country <- gsub("Burma", "Myanmar", country_dep$Country)
+country_dep$Country <- gsub("Congo", "Congo", country_dep$Country)
+country_dep$Country <- gsub("Bosnia And Herzegovina", "Bosnia and Herzegovina", country_dep$Country)
+country_dep$Country <- gsub("Côte D'Ivoire", "Côte d'Ivoire", country_dep$Country)
+```
+
+```{r}
+#| label: creating dataset
+country_dep <- country_dep[!country_dep$Country %in% c("Åland", "Asia", "Africa","Europe","North America","Oceania","South America"),]
+
+```
+
+We map the countries to their corresponding average temperatures and departures, and only select the necessary variables.
+
+```{r}
+#| label: joining the datasets
+country_temps <- country_coordinates |>
+  inner_join(country_dep, by = c("country" = "Country")) |>
+  select(latitude, longitude, country, dt, yearDt, monthDt, decadeDt, monthNames, AverageTemperature, departure)
+```
+
+What does the temperature change look like on a global scale over the years?
+
+For this, we use an interactive world map to show the latitude and longitudes for the countries, a color grading to show the temperature change (average of departures for each year) and the time dimension (year) as a movable slider.
+
+```{r}
+#| label: interactive visualization
+with_dep_by_year <- country_temps |> group_by(country, yearDt) |> summarise(departure_by_year = mean(departure, na.rm = TRUE)) |> suppressMessages()
+  
+#the above line has created a dataframe with country,yearDT and the average of departures for that year for each country. Now all we need is the latitude and longitude coordinates to map back to the country
+
+map_data <- country_coordinates |>  left_join(with_dep_by_year, by = c("country" = "country")) |> select(latitude, longitude, country, yearDt, departure_by_year) 
+```
+
+```{r}
+#| label: packages
+suppressPackageStartupMessages(library(plotly))
+plot_geo(map_data, 
+         lon = ~longitude, 
+         lat = ~latitude, 
+         color=~map_data$departure_by_year, 
+         frame = map_data$yearDt)
+```
+
+As the years go buy, all the dark spots turn to green or closer to green, suggesting that on average the departures from the baseline for each country is increasing every year.
+
+## Analysis
+
+In this section, we used a linear model to determine if there is any correlation between a country's GDP and their deviation from the baseline temperature. We import a new dataset for GDP and clean it to be able to match our countries.
+
+```{r}
+#| label: import
+dta <- read.csv("gdp.csv")
+unique(with_dep_by_year$country)
+table(unique(with_dep_by_year$country) %in% dta$Country.Name )
+
+#Wanted to see the missing country 
+test_data <-
+  with_dep_by_year %>%
+    filter(country %in% dta$Country.Name== FALSE )
+unique(test_data$country)
+```
+
+```{r}
+#| label: changing some major country names to fit out dataset
+dta[dta=="Egypt, Arab Rep."] <- "Egypt"
+dta[dta=="Russian Federation"] <-"Russia"
+dta[dta=="Iran, Islamic Rep."] <-"Iran"
+dta[dta=="Syrian Arab Republic"] <-"Syria"
+dta[dta=="Yemen, Rep."] <-"Yemen"
+dta[dta=="Slovak Republic"] <- "Slovakia"
+dta[dta=="Venezuela, RB"] <- "Venezuela"
+dta[dta=="Macao SAR, China"] <- "Macau"
+dta[dta=="Hong Kong SAR, China"] <- "Hong Kong"
+with_dep_by_year[with_dep_by_year=="Bahamas"] <-"Bahamas, The"
+with_dep_by_year[with_dep_by_year=="French Guiana"] <- "Guyana"
+with_dep_by_year[with_dep_by_year=="Gambia"] <- "Gambia, The"
+
+```
+
+```{r}
+#| label: Using Pivot longer to store year in its own column
+dta1 <- dta %>%
+  pivot_longer(!Country.Name & !Code, names_to = "Year", values_to = "GDP") 
+```
+
+```{r}
+#| label: cleaning
+#There is x infront of each year in the dataset so I removed the first character  
+dta1$Year <- substring(dta1$Year, 2)
+dta1 <- dta1 %>%
+  rename(country = Country.Name)
+dta2 <- dta1[,-2]
+```
+
+```{r}
+#| label: removing missing rows
+sapply(dta2, function(x) sum(is.na(x)))
+#drop the missing rows
+dta3 <- na.omit(dta2)
+```
+
+```{r}
+#| label: mean GDP of each country
+dta3_mean_gdp <- dta3 |> group_by(country) |> summarise(country_mean = mean(GDP,na.rm=TRUE))
+```
+
+Now that we have one measure of GDP for each country, we need one single measure of departure to find out the relation between GDP and temperature change.
+
+For this single measure of departure, we average all departures from 1950 until the end.
+
+```{r}
+#| label: averaging departures
+df0 <- country_temps |> group_by(country) |> filter(dt>'1950-12-01') |> summarise(avg_depart = mean(departure,na.rm = TRUE)) |> arrange(desc(avg_depart)) 
+```
+
+```{r}
+#| label: Join the mean gdp with the mean departure
+country_gdp <- df0 |> left_join(dta3_mean_gdp, by = 'country')
+```
+
+```{r}
+#| label: remove missing values after joining
+#there are small country like 'Anguilla'
+country_gdp <- na.omit(country_gdp)
+```
+
+```{r}
+#| label: remove long and lat
+#Run this code twice to remove longitude and latitude
+country_gdp <- country_gdp[,-1]
+```
+
+```{r}
+#| label: summary
+gdp_lm <- lm(avg_depart ~ country_mean, data = country_gdp) 
+
+summary(gdp_lm)
+```
+
+```{r}
+#| label: correlation between avg_dep and mean gdp (visualization)
+country_gdp |> ggplot(aes(avg_depart,country_mean)) + geom_point()
+```
+
+The results of a linear model between the departures and the GDP are not showing a clear linear relation. The coefficient 2.971e-14 is very small suggesting that GDP is not that significant of a metric to determine the average departure of temperatures.
+
+There could be many other factors, such as HDI, that influence the extent to which temperatures deviate from the baseline. In other words, we will need a more complex model.
+
+## Conclusion
+
+In summary, this report's findings do not deviate from what is already well-known. Global temperatures have been rising steadily because of climate change and humanization. We hypothesized that the sharpest increase in temperatures occurred within the last 50 years. The data supports this conclusion. However, the deviations in temperature are not uniform; some countries have been affected more than others. Research regarding climate change suggests that high-latitude countries are seeing more significant temperature deviations. Many factors contribute to these shifts, for example, positive feedback, which results from melting ice absorbing the sun's warmth rather than the solid ice reflecting it. Therefore, colder countries are seeing more shifts in weather and temperature patterns.
+
+Furthermore, this report attempted to determine the relationship between GDP and temperature deviations. We hypothesized that countries with lower GDPs would have higher departures and, thus, are more susceptible to climate change. However, the linear model did not clearly define the correlation between these two variables. The model likely lacks complexity; there are many interacting variables, each of which could affect the extent to which temperatures are affected. For example, the human development index (HDI). Nevertheless, the findings may serve as the foundation for further research.
